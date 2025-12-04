@@ -1,0 +1,21 @@
+{
+  "name": "mess-backend",
+  "version": "1.0.0",
+  "description": "Backend API with Fastify",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@fastify/cors": "^8.4.0",
+    "@fastify/jwt": "^7.2.4",
+    "bcryptjs": "^2.4.3",
+    "fastify": "^4.24.3",
+    "mongodb": "^6.3.0"
+  }
+}
