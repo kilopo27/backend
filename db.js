@@ -1,7 +1,15 @@
 import { MongoClient } from 'mongodb';
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://michalbrindza1234_db_user:WIrx53ilp9b2Wroh@cluster0.kf8uhqm.mongodb.net/?appName=Cluster0';
-const DB_NAME = 'messaging_app';
+// MongoDB connection string from environment variable
+// For Railway: Set MONGODB_URI in Railway environment variables
+// For local: Create .env file with MONGODB_URI=your-connection-string
+const MONGODB_URI = process.env.MONGODB_URI;
+
+if (!MONGODB_URI) {
+  throw new Error('MONGODB_URI environment variable is required. Please set it in Railway or .env file.');
+}
+
+const DB_NAME = process.env.DB_NAME || 'messaging_app';
 
 let client = null;
 let db = null;

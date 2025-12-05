@@ -501,8 +501,12 @@ const start = async () => {
     const port = process.env.PORT || 3001;
     const host = process.env.HOST || '0.0.0.0';
     
-    await fastify.listen({ port, host });
-    console.log(`🚀 Server listening on http://localhost:${port}`);
+    await fastify.listen({ 
+      port: parseInt(port), 
+      host: host 
+    });
+    console.log(`🚀 Server listening on ${host}:${port}`);
+    console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
