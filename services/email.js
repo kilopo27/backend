@@ -58,7 +58,7 @@ export async function sendVerificationEmail(email, verificationCode) {
   }
 
   try {
-    const fromEmail = process.env.EMAIL_FROM || process.env.RESEND_FROM || 'onboarding@resend.dev';
+    const fromEmail = process.env.EMAIL_FROM || process.env.RESEND_FROM ;
     console.log(`📤 Sending email from: ${fromEmail}`);
     console.log(`📥 Sending email to: ${email}`);
     
@@ -120,7 +120,7 @@ export async function sendPasswordResetEmail(email, resetToken) {
     const frontendUrl = process.env.FRONTEND_URL || 'https://goymessage.netlify.app';
     const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
 
-    const fromEmail = process.env.EMAIL_FROM || process.env.RESEND_FROM || 'onboarding@resend.dev';
+    const fromEmail = process.env.EMAIL_FROM || process.env.RESEND_FROM ;
     
     const mailOptions = {
       from: fromEmail,
