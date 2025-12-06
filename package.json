@@ -19,6 +19,7 @@
     "@fastify/jwt": "^7.2.4",
     "bcryptjs": "^2.4.3",
     "fastify": "^4.24.3",
-    "mongodb": "^6.3.0"
+    "mongodb": "^6.3.0",
+    "nodemailer": "^7.0.11"
   }
 }

@@ -6,14 +6,42 @@ import { connectDB } from './db.js';
 import { User } from './models/User.js';
 import { Message } from './models/Message.js';
 import { Group } from './models/Group.js';
+import { sendVerificationEmail, sendPasswordResetEmail } from './services/email.js';
 
 const fastify = Fastify({
   logger: true
 });
 
 // Register CORS plugin
+// Allow requests from Netlify frontend and localhost for development
+const allowedOrigins = [
+  'https://goymessage.netlify.app',
+  'http://localhost:3000',
+  'http://localhost:3001'
+];
+
+// Add CORS_ORIGIN from environment if set
+if (process.env.CORS_ORIGIN) {
+  allowedOrigins.push(process.env.CORS_ORIGIN);
+}
+
 await fastify.register(cors, {
-  origin: true
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is in allowed list
+    if (allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    
+    // Log for debugging
+    fastify.log.warn(`CORS blocked origin: ${origin}`);
+    
+    // In production, only allow specific origins
+    callback(new Error('Not allowed by CORS'), false);
+  },
+  credentials: true
 });
 
 // Register JWT plugin
@@ -68,23 +96,23 @@ fastify.post('/api/auth/register', async (request, reply) => {
       });
     }
 
-    // Create user
+    // Create user (with verification code)
     const user = await User.create(username, email, password);
 
-    // Generate JWT token
-    const token = fastify.jwt.sign({ 
-      userId: user.id, 
-      username: user.username 
-    });
+    // Send verification email
+    try {
+      await sendVerificationEmail(user.email, user.verificationCode);
+    } catch (emailError) {
+      fastify.log.error('Failed to send verification email:', emailError);
+      // Don't fail registration if email fails, but log it
+    }
 
+    // Don't return token yet - user needs to verify email first
     return { 
-      success: true, 
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email
-      }
+      success: true,
+      message: 'Registration successful. Please verify your email.',
+      email: user.email,
+      requiresVerification: true
     };
   } catch (error) {
     if (error.message === 'Username or email already exists') {
@@ -116,6 +144,15 @@ fastify.post('/api/auth/login', async (request, reply) => {
     const isValid = await User.verifyPassword(password, user.password);
     if (!isValid) {
       return reply.code(401).send({ error: 'Invalid credentials' });
+    }
+
+    // Check if email is verified
+    if (!user.emailVerified) {
+      return reply.code(403).send({ 
+        error: 'Email not verified. Please verify your email before logging in.',
+        requiresVerification: true,
+        email: user.email
+      });
     }
 
     // Generate JWT token
@@ -153,12 +190,161 @@ fastify.get('/api/auth/me', { preHandler: authenticate }, async (request, reply)
       user: {
         id: user._id.toString(),
         username: user.username,
-        email: user.email
+        email: user.email,
+        emailVerified: user.emailVerified || false
       }
     };
   } catch (error) {
     fastify.log.error(error);
     return reply.code(500).send({ error: 'Failed to get user' });
+  }
+});
+
+// Verify email endpoint
+fastify.post('/api/auth/verify-email', async (request, reply) => {
+  try {
+    const { email, code } = request.body;
+
+    if (!email || !code) {
+      return reply.code(400).send({ 
+        error: 'Email and verification code are required' 
+      });
+    }
+
+    const user = await User.verifyEmail(email, code);
+
+    // Generate JWT token after verification
+    const token = fastify.jwt.sign({ 
+      userId: user.id, 
+      username: user.username 
+    });
+
+    return { 
+      success: true,
+      message: 'Email verified successfully',
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        emailVerified: true
+      }
+    };
+  } catch (error) {
+    if (error.message === 'User not found' || 
+        error.message === 'Invalid verification code' ||
+        error.message === 'Verification code expired' ||
+        error.message === 'Email already verified') {
+      return reply.code(400).send({ error: error.message });
+    }
+    fastify.log.error(error);
+    return reply.code(500).send({ error: 'Email verification failed' });
+  }
+});
+
+// Resend verification code endpoint
+fastify.post('/api/auth/resend-verification', async (request, reply) => {
+  try {
+    const { email } = request.body;
+
+    if (!email) {
+      return reply.code(400).send({ 
+        error: 'Email is required' 
+      });
+    }
+
+    const verificationCode = await User.resendVerificationCode(email);
+
+    // Send verification email
+    try {
+      await sendVerificationEmail(email, verificationCode);
+    } catch (emailError) {
+      fastify.log.error('Failed to send verification email:', emailError);
+      return reply.code(500).send({ error: 'Failed to send verification email' });
+    }
+
+    return { 
+      success: true,
+      message: 'Verification code sent to your email'
+    };
+  } catch (error) {
+    if (error.message === 'User not found' || 
+        error.message === 'Email already verified') {
+      return reply.code(400).send({ error: error.message });
+    }
+    fastify.log.error(error);
+    return reply.code(500).send({ error: 'Failed to resend verification code' });
+  }
+});
+
+// Forgot password endpoint
+fastify.post('/api/auth/forgot-password', async (request, reply) => {
+  try {
+    const { email } = request.body;
+
+    if (!email) {
+      return reply.code(400).send({ 
+        error: 'Email is required' 
+      });
+    }
+
+    const resetToken = await User.createPasswordResetToken(email);
+
+    // Always return success (don't reveal if user exists)
+    if (resetToken) {
+      try {
+        await sendPasswordResetEmail(email, resetToken);
+      } catch (emailError) {
+        fastify.log.error('Failed to send password reset email:', emailError);
+        return reply.code(500).send({ error: 'Failed to send password reset email' });
+      }
+    }
+
+    return { 
+      success: true,
+      message: 'If an account with that email exists, a password reset link has been sent.'
+    };
+  } catch (error) {
+    fastify.log.error(error);
+    return reply.code(500).send({ error: 'Failed to process password reset request' });
+  }
+});
+
+// Reset password endpoint
+fastify.post('/api/auth/reset-password', async (request, reply) => {
+  try {
+    const { token, newPassword } = request.body;
+
+    if (!token || !newPassword) {
+      return reply.code(400).send({ 
+        error: 'Token and new password are required' 
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return reply.code(400).send({ 
+        error: 'Password must be at least 6 characters' 
+      });
+    }
+
+    const user = await User.resetPassword(token, newPassword);
+
+    return { 
+      success: true,
+      message: 'Password reset successfully',
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email
+      }
+    };
+  } catch (error) {
+    if (error.message === 'Invalid or expired reset token' || 
+        error.message === 'Reset token expired') {
+      return reply.code(400).send({ error: error.message });
+    }
+    fastify.log.error(error);
+    return reply.code(500).send({ error: 'Password reset failed' });
   }
 });
 
