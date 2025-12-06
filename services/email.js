@@ -48,13 +48,19 @@ const transporter = createTransporter();
 
 // Send verification code email
 export async function sendVerificationEmail(email, verificationCode) {
+  console.log(`📧 Attempting to send verification email to: ${email}`);
+  console.log(`🔑 Verification code: ${verificationCode}`);
+  
   if (!transporter) {
-    console.log(`[DEV] Verification code for ${email}: ${verificationCode}`);
+    console.log(`⚠️ [DEV MODE] No email transporter configured. Verification code for ${email}: ${verificationCode}`);
+    console.log(`⚠️ Please set RESEND_API_KEY in Railway environment variables`);
     return { success: true, dev: true };
   }
 
   try {
     const fromEmail = process.env.EMAIL_FROM || process.env.RESEND_FROM || 'onboarding@resend.dev';
+    console.log(`📤 Sending email from: ${fromEmail}`);
+    console.log(`📥 Sending email to: ${email}`);
     
     const mailOptions = {
       from: fromEmail,
@@ -74,10 +80,30 @@ export async function sendVerificationEmail(email, verificationCode) {
       `
     };
 
-    await transporter.sendMail(mailOptions);
+    // Add timeout to email sending (10 seconds)
+    const emailPromise = transporter.sendMail(mailOptions);
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Email timeout')), 10000)
+    );
+
+    const result = await Promise.race([emailPromise, timeoutPromise]);
+    console.log(`✅ Verification email sent successfully to ${email}`);
+    console.log(`📧 Email result:`, result);
     return { success: true };
   } catch (error) {
-    console.error('Error sending verification email:', error);
+    console.error('❌ Error sending verification email:', error);
+    console.error('❌ Error details:', {
+      message: error.message,
+      code: error.code,
+      response: error.response,
+      responseCode: error.responseCode,
+      command: error.command
+    });
+    
+    // Always log the verification code so user can still verify
+    console.error(`⚠️ VERIFICATION CODE FOR ${email}: ${verificationCode}`);
+    console.error(`⚠️ User can still verify using this code, even though email failed`);
+    
     throw new Error('Failed to send verification email');
   }
 }

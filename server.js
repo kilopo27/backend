@@ -98,16 +98,22 @@ fastify.post('/api/auth/register', async (request, reply) => {
 
     // Create user (with verification code)
     const user = await User.create(username, email, password);
+    
+    fastify.log.info(`✅ User created: ${user.username} (${user.email})`);
+    fastify.log.info(`🔑 Verification code: ${user.verificationCode}`);
 
-    // Send verification email
-    try {
-      await sendVerificationEmail(user.email, user.verificationCode);
-    } catch (emailError) {
-      fastify.log.error('Failed to send verification email:', emailError);
-      // Don't fail registration if email fails, but log it
-    }
+    // Send verification email in background (don't wait for it)
+    // This prevents registration from hanging if email service is slow
+    setImmediate(() => {
+      fastify.log.info(`📧 Attempting to send verification email to ${user.email}...`);
+      sendVerificationEmail(user.email, user.verificationCode).catch((emailError) => {
+        fastify.log.error('❌ Failed to send verification email:', emailError);
+        fastify.log.error(`⚠️ VERIFICATION CODE FOR ${user.email}: ${user.verificationCode}`);
+        fastify.log.error('⚠️ User can still verify using this code from Railway logs');
+      });
+    });
 
-    // Don't return token yet - user needs to verify email first
+    // Return immediately - don't wait for email to be sent
     return { 
       success: true,
       message: 'Registration successful. Please verify your email.',
