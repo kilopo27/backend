@@ -1,24 +1,58 @@
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 
-// Initialize Resend client
-let resend = null;
+// Email configuration from environment variables
+const createTransporter = () => {
+  // Resend SMTP (recommended for production)
+  if (process.env.RESEND_API_KEY) {
+    return nodemailer.createTransport({
+      host: 'smtp.resend.com',
+      port: 587,
+      secure: false,
+      auth: {
+        user: 'resend',
+        pass: process.env.RESEND_API_KEY
+      }
+    });
+  }
 
-if (process.env.RESEND_API_KEY) {
-  resend = new Resend(process.env.RESEND_API_KEY);
-  console.log('✅ Resend API client initialized');
-  console.log(`📧 RESEND_FROM: ${process.env.RESEND_FROM || 'onboarding@resend.dev'}`);
-} else {
-  console.error('❌ RESEND_API_KEY not found in environment variables!');
-  console.error('❌ Emails will NOT be sent. Please set RESEND_API_KEY in Railway.');
-}
+  // For production, use SMTP from environment variables
+  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    return nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT || '587'),
+      secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
+      }
+    });
+  }
+
+  // For development, use Gmail (you'll need to set up App Password)
+  if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+    return nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_APP_PASSWORD
+      }
+    });
+  }
+
+  // Fallback: create test account (for development only)
+  console.warn('⚠️ No email configuration found. Using test account. Emails will not be sent in production.');
+  return null;
+};
+
+const transporter = createTransporter();
 
 // Send verification code email
 export async function sendVerificationEmail(email, verificationCode) {
   console.log(`📧 Attempting to send verification email to: ${email}`);
   console.log(`🔑 Verification code: ${verificationCode}`);
   
-  if (!resend) {
-    console.log(`⚠️ [DEV MODE] No Resend client configured. Verification code for ${email}: ${verificationCode}`);
+  if (!transporter) {
+    console.log(`⚠️ [DEV MODE] No email transporter configured. Verification code for ${email}: ${verificationCode}`);
     console.log(`⚠️ Please set RESEND_API_KEY in Railway environment variables`);
     return { success: true, dev: true };
   }
@@ -28,7 +62,7 @@ export async function sendVerificationEmail(email, verificationCode) {
     console.log(`📤 Sending email from: ${fromEmail}`);
     console.log(`📥 Sending email to: ${email}`);
     
-    const { data, error } = await resend.emails.send({
+    const mailOptions = {
       from: fromEmail,
       to: email,
       subject: 'goyMessage - Email Verification Code',
@@ -44,36 +78,39 @@ export async function sendVerificationEmail(email, verificationCode) {
           <p>If you didn't register for goyMessage, please ignore this email.</p>
         </div>
       `
-    });
+    };
 
-    if (error) {
-      console.error('❌ Resend API error:', error);
-      console.error(`⚠️ VERIFICATION CODE FOR ${email}: ${verificationCode}`);
-      throw new Error(`Failed to send verification email: ${error.message}`);
-    }
+    // Add timeout to email sending (10 seconds)
+    const emailPromise = transporter.sendMail(mailOptions);
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Email timeout')), 10000)
+    );
 
+    const result = await Promise.race([emailPromise, timeoutPromise]);
     console.log(`✅ Verification email sent successfully to ${email}`);
-    console.log(`📧 Email ID: ${data?.id || 'N/A'}`);
+    console.log(`📧 Email result:`, result);
     return { success: true };
   } catch (error) {
     console.error('❌ Error sending verification email:', error);
     console.error('❌ Error details:', {
       message: error.message,
-      name: error.name,
-      stack: error.stack
+      code: error.code,
+      response: error.response,
+      responseCode: error.responseCode,
+      command: error.command
     });
     
     // Always log the verification code so user can still verify
     console.error(`⚠️ VERIFICATION CODE FOR ${email}: ${verificationCode}`);
     console.error(`⚠️ User can still verify using this code, even though email failed`);
     
-    throw new Error(`Failed to send verification email: ${error.message}`);
+    throw new Error('Failed to send verification email');
   }
 }
 
 // Send password reset email
 export async function sendPasswordResetEmail(email, resetToken) {
-  if (!resend) {
+  if (!transporter) {
     const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
     console.log(`[DEV] Password reset link for ${email}: ${resetUrl}`);
     return { success: true, dev: true, resetUrl };
@@ -82,12 +119,10 @@ export async function sendPasswordResetEmail(email, resetToken) {
   try {
     const frontendUrl = process.env.FRONTEND_URL || 'https://goymessage.netlify.app';
     const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
+
     const fromEmail = process.env.EMAIL_FROM || process.env.RESEND_FROM || 'onboarding@resend.dev';
-
-    console.log(`📧 Attempting to send password reset email to: ${email}`);
-    console.log(`🔗 Reset URL: ${resetUrl}`);
-
-    const { data, error } = await resend.emails.send({
+    
+    const mailOptions = {
       from: fromEmail,
       to: email,
       subject: 'goyMessage - Reset Your Password',
@@ -105,23 +140,13 @@ export async function sendPasswordResetEmail(email, resetToken) {
           <p>If you didn't request a password reset, please ignore this email.</p>
         </div>
       `
-    });
+    };
 
-    if (error) {
-      console.error('❌ Resend API error:', error);
-      throw new Error(`Failed to send password reset email: ${error.message}`);
-    }
-
-    console.log(`✅ Password reset email sent successfully to ${email}`);
-    console.log(`📧 Email ID: ${data?.id || 'N/A'}`);
+    await transporter.sendMail(mailOptions);
     return { success: true, resetUrl };
   } catch (error) {
-    console.error('❌ Error sending password reset email:', error);
-    console.error('❌ Error details:', {
-      message: error.message,
-      name: error.name,
-      stack: error.stack
-    });
-    throw new Error(`Failed to send password reset email: ${error.message}`);
+    console.error('Error sending password reset email:', error);
+    throw new Error('Failed to send password reset email');
   }
 }
+
