@@ -113,13 +113,6 @@ fastify.post('/api/auth/register', async (request, reply) => {
     fastify.log.info(`🔑 Verification code: ${user.verificationCode}`);
     fastify.log.info(`⚠️ VERIFICATION CODE FOR ${user.email}: ${user.verificationCode} (ALWAYS LOGGED)`);
 
-    // Check if email service is configured
-    const hasEmailConfig = process.env.RESEND_API_KEY || process.env.SMTP_HOST || process.env.GMAIL_USER;
-    if (!hasEmailConfig) {
-      fastify.log.warn('⚠️ No email configuration found! Email will not be sent.');
-      fastify.log.warn(`⚠️ VERIFICATION CODE FOR ${user.email}: ${user.verificationCode}`);
-    }
-
     // Send verification email in background (don't wait for it)
     // This prevents registration from hanging if email service is slow
     setImmediate(() => {
@@ -132,12 +125,23 @@ fastify.post('/api/auth/register', async (request, reply) => {
     });
 
     // Return immediately - don't wait for email to be sent
-    return { 
+    // In development, also return the code for testing
+    const response = { 
       success: true,
       message: 'Registration successful. Please verify your email.',
       email: user.email,
       requiresVerification: true
     };
+    
+    // For development/testing: return code if email is not configured
+    const hasEmailConfig = process.env.RESEND_API_KEY || process.env.SMTP_HOST || process.env.GMAIL_USER;
+    if (!hasEmailConfig) {
+      response.verificationCode = user.verificationCode;
+      response.message = 'Registration successful. Email not configured - code shown below.';
+      fastify.log.warn(`⚠️ Returning verification code in response (email not configured)`);
+    }
+    
+    return response;
   } catch (error) {
     if (error.message === 'Username or email already exists') {
       return reply.code(409).send({ error: error.message });
@@ -310,10 +314,20 @@ fastify.post('/api/auth/resend-verification', async (request, reply) => {
     });
 
     // Return immediately - don't wait for email to be sent
-    return { 
+    // In development, also return the code for testing
+    const response = { 
       success: true,
       message: 'Verification code sent to your email'
     };
+    
+    // For development/testing: return code if email is not configured
+    if (!process.env.RESEND_API_KEY && !process.env.SMTP_HOST && !process.env.GMAIL_USER) {
+      response.verificationCode = verificationCode;
+      response.message = 'Verification code (email not configured - check Railway logs)';
+      fastify.log.warn(`⚠️ Returning verification code in response (development mode)`);
+    }
+    
+    return response;
   } catch (error) {
     if (error.message === 'User not found' || 
         error.message === 'Email already verified') {

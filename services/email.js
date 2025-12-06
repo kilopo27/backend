@@ -4,7 +4,11 @@ import nodemailer from 'nodemailer';
 const createTransporter = () => {
   // Resend SMTP (recommended for production)
   if (process.env.RESEND_API_KEY) {
-    return nodemailer.createTransport({
+    console.log('✅ Resend API key found, creating email transporter...');
+    console.log(`📧 RESEND_API_KEY: ${process.env.RESEND_API_KEY.substring(0, 15)}...`);
+    console.log(`📧 RESEND_FROM: ${process.env.RESEND_FROM || 'onboarding@resend.dev'}`);
+    
+    const transporter = nodemailer.createTransport({
       host: 'smtp.resend.com',
       port: 587,
       secure: false,
@@ -13,6 +17,21 @@ const createTransporter = () => {
         pass: process.env.RESEND_API_KEY
       }
     });
+    
+    // Verify connection on startup
+    transporter.verify((error, success) => {
+      if (error) {
+        console.error('❌ Email transporter verification failed:', error);
+        console.error('❌ Check RESEND_API_KEY in Railway environment variables');
+      } else {
+        console.log('✅ Email transporter verified and ready to send emails');
+      }
+    });
+    
+    return transporter;
+  } else {
+    console.error('❌ RESEND_API_KEY not found in environment variables!');
+    console.error('❌ Emails will NOT be sent. Please set RESEND_API_KEY in Railway.');
   }
 
   // For production, use SMTP from environment variables
@@ -88,7 +107,11 @@ export async function sendVerificationEmail(email, verificationCode) {
 
     const result = await Promise.race([emailPromise, timeoutPromise]);
     console.log(`✅ Verification email sent successfully to ${email}`);
-    console.log(`📧 Email result:`, result);
+    console.log(`📧 Email result:`, JSON.stringify(result, null, 2));
+    console.log(`📧 Message ID: ${result.messageId || 'N/A'}`);
+    console.log(`📧 Response: ${result.response || 'N/A'}`);
+    console.log(`📧 Accepted: ${result.accepted || 'N/A'}`);
+    console.log(`📧 Rejected: ${result.rejected || 'N/A'}`);
     return { success: true };
   } catch (error) {
     console.error('❌ Error sending verification email:', error);
