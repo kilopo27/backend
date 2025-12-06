@@ -28,20 +28,30 @@ if (process.env.CORS_ORIGIN) {
 await fastify.register(cors, {
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      return callback(null, true);
+    }
     
     // Check if origin is in allowed list
-    if (allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    // In development, allow all origins
+    if (process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
     
     // Log for debugging
     fastify.log.warn(`CORS blocked origin: ${origin}`);
+    fastify.log.warn(`Allowed origins: ${allowedOrigins.join(', ')}`);
     
     // In production, only allow specific origins
-    callback(new Error('Not allowed by CORS'), false);
+    callback(new Error(`Not allowed by CORS. Origin: ${origin}`), false);
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 });
 
 // Register JWT plugin
@@ -101,6 +111,14 @@ fastify.post('/api/auth/register', async (request, reply) => {
     
     fastify.log.info(`✅ User created: ${user.username} (${user.email})`);
     fastify.log.info(`🔑 Verification code: ${user.verificationCode}`);
+    fastify.log.info(`⚠️ VERIFICATION CODE FOR ${user.email}: ${user.verificationCode} (ALWAYS LOGGED)`);
+
+    // Check if email service is configured
+    const hasEmailConfig = process.env.RESEND_API_KEY || process.env.SMTP_HOST || process.env.GMAIL_USER;
+    if (!hasEmailConfig) {
+      fastify.log.warn('⚠️ No email configuration found! Email will not be sent.');
+      fastify.log.warn(`⚠️ VERIFICATION CODE FOR ${user.email}: ${user.verificationCode}`);
+    }
 
     // Send verification email in background (don't wait for it)
     // This prevents registration from hanging if email service is slow
@@ -259,16 +277,39 @@ fastify.post('/api/auth/resend-verification', async (request, reply) => {
       });
     }
 
-    const verificationCode = await User.resendVerificationCode(email);
+    fastify.log.info(`📧 Resend verification requested for: ${email}`);
 
-    // Send verification email
-    try {
-      await sendVerificationEmail(email, verificationCode);
-    } catch (emailError) {
-      fastify.log.error('Failed to send verification email:', emailError);
-      return reply.code(500).send({ error: 'Failed to send verification email' });
+    const verificationCode = await User.resendVerificationCode(email);
+    
+    fastify.log.info(`🔑 New verification code generated: ${verificationCode}`);
+    fastify.log.info(`⚠️ VERIFICATION CODE FOR ${email}: ${verificationCode} (ALWAYS LOGGED)`);
+
+    // Check if email service is configured
+    const hasEmailConfig = process.env.RESEND_API_KEY || process.env.SMTP_HOST || process.env.GMAIL_USER;
+    if (!hasEmailConfig) {
+      fastify.log.warn('⚠️ No email configuration found! Email will not be sent.');
+      fastify.log.warn(`⚠️ VERIFICATION CODE FOR ${email}: ${verificationCode}`);
+      // Return code in response for development/testing
+      return { 
+        success: true,
+        message: 'Verification code generated (email not configured)',
+        verificationCode: process.env.NODE_ENV === 'development' ? verificationCode : undefined,
+        emailConfigured: false
+      };
     }
 
+    // Send verification email in background (don't wait for it)
+    // This prevents endpoint from hanging if email service is slow
+    setImmediate(() => {
+      fastify.log.info(`📧 Attempting to send verification email to ${email}...`);
+      sendVerificationEmail(email, verificationCode).catch((emailError) => {
+        fastify.log.error('❌ Failed to send verification email:', emailError);
+        fastify.log.error(`⚠️ VERIFICATION CODE FOR ${email}: ${verificationCode}`);
+        fastify.log.error('⚠️ User can still verify using this code from Railway logs');
+      });
+    });
+
+    // Return immediately - don't wait for email to be sent
     return { 
       success: true,
       message: 'Verification code sent to your email'
@@ -278,8 +319,12 @@ fastify.post('/api/auth/resend-verification', async (request, reply) => {
         error.message === 'Email already verified') {
       return reply.code(400).send({ error: error.message });
     }
-    fastify.log.error(error);
-    return reply.code(500).send({ error: 'Failed to resend verification code' });
+    fastify.log.error('❌ Error in resend verification:', error);
+    fastify.log.error('❌ Error stack:', error.stack);
+    return reply.code(500).send({ 
+      error: 'Failed to resend verification code',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
