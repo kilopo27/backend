@@ -746,6 +746,16 @@ fastify.get('/api/groups/:groupId/messages', { preHandler: authenticate }, async
   }
 });
 
+// 404 handler for undefined routes
+fastify.setNotFoundHandler(async (request, reply) => {
+  fastify.log.warn(`404: ${request.method} ${request.url} not found`);
+  return reply.code(404).send({ 
+    message: `Route ${request.method}:${request.url} not found`,
+    error: 'Not Found',
+    statusCode: 404
+  });
+});
+
 // Start server
 const start = async () => {
   try {
